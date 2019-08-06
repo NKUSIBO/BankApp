@@ -12,16 +12,39 @@ namespace Inocrea.CodaBox.ApiModel
         [Key]
         public int Id { get; set; }
         [DataMember]
-        public String AccountingDate { get; set; }
+        public string AccountingDate { get; set; }
+      
         [DataMember]
-        public DateTime ValueDate { get; set; }
+        public string Bic { get; set; }
         [DataMember]
         public string CounterParty { get; set; }
+       
+       
+       
         [DataMember]
-        public string TransactionMessage { get; set; }
+        public decimal NewBalance { get; set; }
         [DataMember]
-        public decimal Balance { get; set; }
+        public decimal InitialBalance { get; set; }
+       
         [DataMember]
-        public decimal Amount { get; set; }
+        public string Name { get; set; }
+        [DataMember]
+        public string CurrencyCode { get; set; }
+        [DataMember]
+        public string NumeroIdentification { get; set; }
+        [DataMember]
+        public string Number { get; set; }
+        [DataMember]
+        public ICollection<Transactions> Transactions { get; set; }
+        public string Amount { get; set; }
+        [DataMember]
+        public string TransactionDate { get; set; }
+
+        [DataMember]
+        public string ValueDate { get; set; }
+        [DataMember]
+        public string StructuredMessage { get; set; }
+        [DataMember]
+        public string Message { get; set; }
     }
 }

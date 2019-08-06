@@ -1,69 +1,150 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Data;
 using System.Diagnostics;
-using System.IO;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
-using ClosedXML.Excel;
-using Inocrea.CodaBox.ApiModel;
-using Inocrea.CodaBox.Web.Factory;
 using Microsoft.AspNetCore.Mvc;
 using Inocrea.CodaBox.Web.Models;
-using Microsoft.Extensions.Options;
 using Inocrea.CodaBox.Web.Helper;
-using OfficeOpenXml;
+using Inocrea.CodaBox.ApiModel;
+using System.Data;
+using System.Globalization;
+using System.IO;
+using System.Net.Http;
+using System.Reflection;
+using ClosedXML.Excel;
+using DocumentFormat.OpenXml.Wordprocessing;
+using Inocrea.CodaBox.ApiModel.ViewModel;
+using Inocrea.CodaBox.Web.Factory;
+using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Primitives;
+using Newtonsoft.Json;
 
 namespace Inocrea.CodaBox.Web.Controllers
 {
+    
     public class HomeController : Controller
     {
         private readonly IOptions<SettingsModels> _appSettings;
-        private static List<InvoiceModel> listInvoice = new List<InvoiceModel>();
+      
+        private static List<StatementAccountViewModel> _listData = new List<StatementAccountViewModel>();
+        private static string _name = "";
 
         public HomeController(IOptions<SettingsModels> app)
         {
             _appSettings = app;
-            AppSettings.ApiUrl = "Https://"+_appSettings.Value.WebApiBaseUrl;
+            AppSettings.ApiUrl = _appSettings.Value.WebApiBaseUrl;
         }
-        public async Task<IActionResult> Index()
+       
+        public  ActionResult Index()
         {
-
-            List<InvoiceModel> data = await ApiClientFactory.Instance.GetInvoice();
-            listInvoice = data;
-            return View(data);
+            
+            return View();
         }
-        public async Task<IActionResult> ExportV2(CancellationToken cancellationToken)
+        public static DateTime StringToDate(string Date)
+        {
+            try
+            {
+                return DateTime.Parse(Date);
+            }
+            catch (FormatException)
+            {
+                return DateTime.Parse("1/1/0001");
+            }
+        }
+        private List<StatementAccountViewModel> ProcessCollection(List<StatementAccountViewModel> lstElements, Microsoft.AspNetCore.Http.IFormCollection requestFormData)
+        {
+            string searchText = string.Empty;
+            Microsoft.Extensions.Primitives.StringValues tempOrder = new[] { "" };
+            if (requestFormData.TryGetValue("search[value]", out tempOrder))
+            {
+                searchText = requestFormData["search[value]"].ToString();
+            }
+            tempOrder = new[] { "" };
+            var skip = Convert.ToInt32(requestFormData["start"].ToString());
+            var pageSize = Convert.ToInt32(requestFormData["length"].ToString());
+
+            if (requestFormData.TryGetValue("order[0][column]", out tempOrder))
+            {
+                var columnIndex = requestFormData["order[0][column]"].ToString();
+                var sortDirection = requestFormData["order[0][dir]"].ToString();
+                tempOrder = new[] { "" };
+                if (requestFormData.TryGetValue($"columns[{columnIndex}][data]", out tempOrder))
+                {
+                    var columName = requestFormData[$"columns[{columnIndex}][data]"].ToString();
+
+                    if (pageSize > 0)
+                    {
+                        var prop = GetProperty(columName);
+                        if (sortDirection == "asc")
+                        {
+                            return lstElements
+                                .Where(x => x.Date.ToString(CultureInfo.CurrentCulture).ToLower().Contains(searchText.ToLower())||x.Iban.ToString().ToLower().Contains(searchText.ToLower())
+                                            || string.Equals(x.InitialBalance.ToString(CultureInfo.CurrentCulture).ToLower(), searchText.ToLower(), StringComparison.CurrentCultureIgnoreCase) || string.Equals(x.NewBalance.ToString(CultureInfo.CurrentCulture).ToLower(), searchText.ToLower(), StringComparison.CurrentCultureIgnoreCase))
+                                .Skip(skip)
+                                .Take(pageSize)
+                                .OrderBy(prop.GetValue).ToList();
+                        }
+                        // x.InitialBalance.ToString(CultureInfo.CurrentCulture).ToLower().Contains(searchText.ToLower())
+                        return lstElements
+                            .Where(x => x.Date.ToString(CultureInfo.CurrentCulture).ToLower().Contains(searchText.ToLower()) || x.Iban.ToString().ToLower().Contains(searchText.ToLower())
+                                        || string.Equals(x.InitialBalance.ToString(CultureInfo.CurrentCulture).ToLower(), searchText.ToLower(), StringComparison.CurrentCultureIgnoreCase) || string.Equals(x.NewBalance.ToString(CultureInfo.CurrentCulture).ToLower(), searchText.ToLower(), StringComparison.CurrentCultureIgnoreCase))
+                            .Skip(skip)
+                            .Take(pageSize)
+                            .OrderByDescending(prop.GetValue).ToList();
+                    }
+
+                    return lstElements;
+                }
+            }
+            return null;
+        }
+        private PropertyInfo GetProperty(string columnName)
+        {
+            var properties = typeof(StatementAccountViewModel).GetProperties();
+            PropertyInfo prop = null;
+            foreach (var item in properties)
+            {
+                if (item.Name.ToLower().Equals(columnName.ToLower()))
+                {
+                    prop = item;
+                    break;
+
+                }
+            }
+
+            return prop;
+        }
+        private int GetTotalRecordsFiltered(IFormCollection requestFormData, List<StatementAccountViewModel> lstItems, List<StatementAccountViewModel> listProcessedItems)
+        {
+            var recFiltered = 0;
+            Microsoft.Extensions.Primitives.StringValues tempOrder = new[] { "" };
+            if (requestFormData.TryGetValue("search[value]", out tempOrder))
+            {
+                if (string.IsNullOrEmpty(requestFormData["search[value]"].ToString().Trim()))
+                {
+                    recFiltered = lstItems.Count;
+                }
+                else
+                {
+                    recFiltered = listProcessedItems.Count;
+                }
+            }
+            return recFiltered;
+
+        }
+        public FileResult ExportTransactions()
         {
             // query data from database  
-            await Task.Yield();
-            var list = await ApiClientFactory.Instance.GetInvoice();
-            var stream = new MemoryStream();
-
-            using (var package = new ExcelPackage(stream))
-            {
-                var workSheet = package.Workbook.Worksheets.Add("Sheet1");
-                workSheet.Cells.LoadFromCollection(list, true);
-                package.Save();
-            }
-            stream.Position = 0;
-            string excelName = $"UserList-{DateTime.Now.ToString("yyyyMMddHHmmssfff")}.xlsx";
-
-            //return File(stream, "application/octet-stream", excelName);  
-            return File(stream, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", excelName);
-        }
-
-        public FileResult Export()
-        {
-            DataTable dt = ExportToExcel.ExportGeneric<List<InvoiceModel>>(listInvoice);
+            DataTable dt = ExportToExcel.ExportGenericTransactions<List<StatementAccountViewModel>>(_listData);
             for (int i = 0; i < dt.Columns.Count; i++)
             {
 
                 if ((dt.Columns[i].ColumnName.ToString().Contains("DATE") ||
                      (dt.Columns[i].ColumnName.ToString().Contains("Date"))))
                 {
-                    var name = dt.Columns[i].ColumnName;
+                     _name = dt.Columns[i].ColumnName;
                     if (!(dt.Columns[i].ColumnName.ToString().Contains("FORMAT")))
                     {
                         dt.Columns.Remove(dt.Columns[i].ColumnName.ToString());
@@ -74,7 +155,7 @@ namespace Inocrea.CodaBox.Web.Controllers
 
             }
 
-            var fileName = "cod" + ".xlsx"; //declaration.xlsx";
+            var fileName = "trans"+"transactions" + ".xlsx"; //declaration.xlsx";
 
 
             using (XLWorkbook wb = new XLWorkbook())
@@ -82,21 +163,72 @@ namespace Inocrea.CodaBox.Web.Controllers
                 wb.Worksheets.Add(dt);
                 using (MemoryStream stream = new MemoryStream())
                 {
-                    try
-                    {
-                        wb.SaveAs(stream);
-                        return File(stream.ToArray(),
-                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName);
-                    }
-                    catch (Exception ex)
-                    {
-
-                        throw;
-                    }
+                    wb.SaveAs(stream);
+                    return File(stream.ToArray(),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName);
                 }
             }
         }
 
+        public void InsertStatementToDb(List<Statements> staInsertResult)
+        {
+            ApiServerCoda _api = new ApiServerCoda();
+            HttpClient client = _api.Initial();
+            foreach (var item in staInsertResult)
+            {
+                var statementToInsert = JsonConvert.SerializeObject(item);
+                var content = new StringContent(statementToInsert, System.Text.Encoding.UTF8, "application/json");
+                try
+                {
+                    HttpResponseMessage result = client.PostAsync("api/Statements", content).Result;
+                    if (result.IsSuccessStatusCode)
+                    {
+
+                        Console.WriteLine("All is fine");
+
+                    }
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine(e);
+                    throw;
+                }
+
+            }
+        }
+        [HttpPost]
+        public async Task<IActionResult> LoadTransaction()
+        {
+           
+            var requestFormData = Request.Form;
+            List<StatementAccountViewModel> data = await ApiClientFactory.Instance.GetStatements();
+            try
+            {
+                _listData = ProcessCollection(data, requestFormData);
+                int transFiltered = GetTotalRecordsFiltered(requestFormData, data, _listData);
+                dynamic response = new
+                {
+                    data = _listData,
+                    draw = requestFormData["draw"],
+                    recordsFiltered = transFiltered,
+                    recordsTotal = data.Count
+                };
+                return Ok(response);
+
+             
+            }
+            catch (Exception)
+            {
+
+                return NotFound();
+            }
+
+
+
+        }
+      
+        [HttpPost]
+       
         public IActionResult About()
         {
             ViewData["Message"] = "Your application description page.";
